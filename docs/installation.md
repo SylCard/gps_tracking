@@ -11,41 +11,98 @@
 5. Click "CHOOSE STORAGE" and select your microSD card
 6. Click the settings icon (gear symbol) and:
    - Set hostname: netguardian
-   - Enable SSH
+   - Enable SSH (for initial setup only)
    - Set username and password
-   - Configure your WiFi network
+   - Configure WiFi:
+     - SSID: Your phone's hotspot name
+     - Password: Your hotspot password
 7. Click "WRITE" and wait for the process to complete
+8. After writing is complete, remove and reinsert the microSD card
+9. Create an empty file named `ssh` in the boot partition of the SD card
+10. Create a file named `config.txt` in the boot partition (or edit if it exists) and add:
+    ```
+    dtoverlay=dwc2
+    ```
+11. Edit `cmdline.txt` in the boot partition and add after `rootwait`:
+    ```
+    modules-load=dwc2,g_ether
+    ```
 
-### 2. First Boot
+### 2. Connection Options
+
+You have two options for the initial setup:
+
+#### Option A: Phone Hotspot Method (Recommended)
+
+1. Enable your phone's hotspot with the same SSID and password you configured in step 6
+2. Insert the microSD card into your Raspberry Pi Zero 2 W
+3. Connect the VK-162 GPS dongle to the USB port
+4. Power up the Raspberry Pi using a power bank or power supply
+5. On your laptop, connect to the same phone hotspot
+6. Wait about 2 minutes for the Pi to boot and connect
+7. The Pi will automatically connect to your phone's hotspot
+8. Find your Pi's IP address using one of these methods:
+   - Check your phone's hotspot settings for connected devices
+   - Use a network scanner app on your phone
+   - Try: `ping netguardian.local` from your laptop
+
+#### Option B: USB Connection Method
 
 1. Insert the microSD card into your Raspberry Pi Zero 2 W
-2. Connect the VK-162 GPS dongle to the USB port (you may need a micro USB adapter)
-3. Power up the Raspberry Pi
-4. Wait about 2 minutes for the initial boot
+2. Connect the VK-162 GPS dongle to the USB port using a USB OTG adapter
+3. Connect the Raspberry Pi to your computer using the USB data port (not the power port)
+   - Use the port marked "USB" on the Pi, not the one marked "PWR"
+   - This will create both a power and network connection
+4. Power up the Raspberry Pi
+5. Wait about 2 minutes for the initial boot
 
 ### 3. Connect to Your Raspberry Pi
 
-From your computer, open a terminal/command prompt:
-
+If using phone hotspot (Option A):
 ```bash
-# For Windows, use PowerShell or Command Prompt
+# If your laptop supports mDNS (.local domains)
 ssh pi@netguardian.local
 
-# If the above doesn't work, find your Pi's IP address from your router
-# and use:
-ssh pi@<your-pi-ip-address>
+# Or using the IP address you found
+ssh pi@<pi-ip-address>
+```
+
+If using USB connection (Option B):
+
+For macOS/Linux:
+```bash
+# The Pi should be automatically assigned an address
+ssh pi@raspberrypi.local
+```
+
+For Windows:
+1. Install Bonjour Print Services if not already installed
+2. Open PowerShell and connect:
+```bash
+ssh pi@raspberrypi.local
+```
+
+If the .local address doesn't work:
+- On Windows: The Pi should appear as a new Ethernet device with address 192.168.7.1
+- On macOS/Linux: Use address 192.168.7.1
+```bash
+ssh pi@192.168.7.1
 ```
 
 ### 4. Install Net Guardian
 
-Once connected via SSH, run these commands:
+Once connected via USB-SSH, run these commands:
 
 ```bash
 # Update package list
 sudo apt update
 
-# Install Git
-sudo apt install -y git
+# Install Git and Bluetooth packages
+sudo apt install -y git bluetooth bluez python3-pip python3-bluez
+
+# Enable Bluetooth
+sudo systemctl enable bluetooth
+sudo systemctl start bluetooth
 
 # Clone the repository
 git clone https://github.com/yourusername/net-guardian.git
@@ -78,6 +135,14 @@ cgps -s
 ```
 You should see GPS data if the dongle is working correctly. It might take a few minutes to get the first fix, especially indoors.
 
+4. Check Bluetooth status:
+```bash
+sudo bluetoothctl
+power on
+show
+```
+You should see your Bluetooth adapter information and status.
+
 ### 6. Troubleshooting
 
 If the GPS isn't working:
@@ -98,9 +163,21 @@ ls -l /dev/ttyACM0
 sudo systemctl restart gpsd
 ```
 
-4. Check logs:
+If Bluetooth isn't working:
+
+1. Check Bluetooth service:
 ```bash
-journalctl -u gpsd
+sudo systemctl status bluetooth
+```
+
+2. Reset Bluetooth:
+```bash
+sudo systemctl restart bluetooth
+```
+
+3. Check logs:
+```bash
+journalctl -u bluetooth
 journalctl -u net-guardian
 ```
 
@@ -110,28 +187,25 @@ journalctl -u net-guardian
 - Use a good quality power bank to avoid voltage drops
 - The system draws approximately 120-150mA during normal operation
 - A 10,000mAh power bank should provide roughly 2-3 days of operation
+- BLE communication is more power-efficient than WiFi, extending battery life
 
-### Network Configuration
+### Bluetooth Configuration
 
-If you need to change WiFi settings later:
+To pair with the visualizer:
 
-1. Edit the wpa_supplicant configuration:
+1. Enable Bluetooth discovery mode:
 ```bash
-sudo nano /etc/wpa_supplicant/wpa_supplicant.conf
+sudo bluetoothctl
+discoverable on
+pairable on
 ```
 
-2. Add your network:
-```
-network={
-    ssid="Your_WiFi_Name"
-    psk="Your_WiFi_Password"
-}
-```
-
-3. Restart networking:
+2. Note the Bluetooth address shown in:
 ```bash
-sudo systemctl restart networking
+show
 ```
+
+3. Use this address when configuring the visualizer application
 
 ## Next Steps
 
