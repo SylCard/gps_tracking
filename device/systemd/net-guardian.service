@@ -1,0 +1,13 @@
+[Unit]
+Description=Net Guardian GPS Tracker
+After=gpsd.service
+Wants=gpsd.service
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/net-guardian/device/src/main.py
+WorkingDirectory=/home/pi/net-guardian/device
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target 
