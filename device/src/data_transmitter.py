@@ -6,7 +6,7 @@ import subprocess
 from gps_reader import GPSReader
 
 class GPSDataHandler(BaseHTTPRequestHandler):
-    """Simple HTTP handler that serves GPS data in cgps format."""
+    """Simple HTTP handler that serves GPS data."""
     
     def do_GET(self):
         """Serve GPS data as JSON."""
@@ -16,12 +16,15 @@ class GPSDataHandler(BaseHTTPRequestHandler):
         self.end_headers()
         
         try:
-            # Run cgps and capture output
-            result = subprocess.run(['cgps', '-s'], capture_output=True, text=True, timeout=2)
+            # Get TPV (Time-Position-Velocity) data
+            tpv = subprocess.run(['gpspipe', '-w', '-n', '1'], capture_output=True, text=True, timeout=2)
+            # Get satellite data
+            sky = subprocess.run(['gpspipe', '-w', '-n', '2'], capture_output=True, text=True, timeout=2)
             
             response = {
-                'raw_data': result.stdout,
-                'timestamp': None
+                'gps_data': tpv.stdout,
+                'satellite_data': sky.stdout,
+                'raw_gpsd': subprocess.run(['ps', 'aux', '|', 'grep', 'gpsd'], capture_output=True, text=True).stdout
             }
             
             self.wfile.write(json.dumps(response, indent=2).encode())
@@ -29,7 +32,8 @@ class GPSDataHandler(BaseHTTPRequestHandler):
         except Exception as e:
             error_response = {
                 'error': str(e),
-                'raw_data': None
+                'gps_data': None,
+                'satellite_data': None
             }
             self.wfile.write(json.dumps(error_response, indent=2).encode())
     
