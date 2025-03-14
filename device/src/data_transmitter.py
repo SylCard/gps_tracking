@@ -1,94 +1,83 @@
 import json
 import logging
-import subprocess
-import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 from gps_reader import GPSReader
 
-class BLEDataTransmitter:
-    """Simple BLE transmitter that broadcasts GPS coordinates."""
+class GPSDataHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler that serves the latest GPS coordinates."""
     
-    def __init__(self, device_name: str = "NetGuardian"):
-        self.device_name = device_name
+    # Latest position data (shared between threads)
+    current_position = None
+    
+    def do_GET(self):
+        """Serve GPS data as JSON."""
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')  # Allow any origin
+        self.end_headers()
+        
+        response = {
+            'position': self.current_position if self.current_position else None
+        }
+        self.wfile.write(json.dumps(response).encode())
+    
+    def log_message(self, format, *args):
+        """Suppress default logging."""
+        pass
+
+class GPSTransmitter:
+    """Simple HTTP server that serves GPS coordinates."""
+    
+    def __init__(self, host='0.0.0.0', port=8000):
+        self.host = host
+        self.port = port
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
+        self.server = None
+        self.server_thread = None
     
-    def _run_cmd(self, cmd: str) -> bool:
+    def start_server(self):
+        """Start HTTP server in a background thread."""
         try:
-            subprocess.run(cmd, shell=True, check=True)
+            self.server = HTTPServer((self.host, self.port), GPSDataHandler)
+            self.server_thread = threading.Thread(target=self.server.serve_forever)
+            self.server_thread.daemon = True
+            self.server_thread.start()
+            self.logger.info(f"Server started at http://{self.host}:{self.port}")
             return True
         except Exception as e:
-            self.logger.error(f"Command failed: {cmd}")
-            self.logger.error(f"Error: {e}")
+            self.logger.error(f"Failed to start server: {e}")
             return False
     
-    def start_advertising(self):
-        """Start BLE advertising."""
-        try:
-            # Basic BLE setup
-            cmds = [
-                "sudo hciconfig hci0 up",
-                f"sudo hciconfig hci0 name {self.device_name}",
-                "sudo hciconfig hci0 leadv 3"  # Non-connectable advertising
-            ]
-            
-            for cmd in cmds:
-                if not self._run_cmd(cmd):
-                    return False
-                
-            self.logger.info(f"Started BLE advertising as {self.device_name}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to start advertising: {e}")
-            return False
+    def update_position(self, position: dict):
+        """Update the current position data."""
+        GPSDataHandler.current_position = position
+        self.logger.info(f"Position updated: {position}")
     
-    def transmit_data(self, gps_data: dict) -> bool:
-        """Broadcast GPS data as BLE advertising data."""
-        try:
-            # Format coordinates as compact string: "lat,lon"
-            data = f"{gps_data['latitude']:.6f},{gps_data['longitude']:.6f}"
-            
-            # Convert to hex
-            hex_data = ''.join([hex(ord(c))[2:].zfill(2) for c in data])
-            
-            # Set advertising data (max 31 bytes)
-            cmd = f"sudo hcitool -i hci0 cmd 0x08 0x0008 {len(hex_data)//2 + 2} 02 01 06 {len(hex_data)//2} FF {hex_data}"
-            if not self._run_cmd(cmd):
-                return False
-                
-            self.logger.info(f"Broadcasting: {data}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to transmit: {e}")
-            return False
-    
-    def stop_advertising(self):
-        """Stop BLE advertising."""
-        try:
-            self._run_cmd("sudo hciconfig hci0 noleadv")
-            self.logger.info("Stopped advertising")
-            return True
-        except Exception as e:
-            self.logger.error(f"Error stopping: {e}")
-            return False
+    def stop_server(self):
+        """Stop the HTTP server."""
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.logger.info("Server stopped")
 
 if __name__ == "__main__":
     # Initialize components
     gps = GPSReader(update_interval=5)
-    transmitter = BLEDataTransmitter()
+    transmitter = GPSTransmitter(port=8000)
     
     # Connect to GPS
     if not gps.connect():
         logging.error("Failed to connect to GPS. Exiting.")
         exit(1)
     
-    # Start advertising
-    if not transmitter.start_advertising():
-        logging.error("Failed to start advertising. Exiting.")
+    # Start server
+    if not transmitter.start_server():
+        logging.error("Failed to start server. Exiting.")
         exit(1)
     
     logging.info("GPS Tracker started. Waiting for GPS fix...")
@@ -97,12 +86,12 @@ if __name__ == "__main__":
         while True:
             position = gps.get_current_position()
             if position:
-                transmitter.transmit_data(position)
-            time.sleep(5)
+                transmitter.update_position(position)
+            threading.Event().wait(5)  # Sleep without blocking shutdown
             
     except KeyboardInterrupt:
         logging.info("Shutting down...")
     except Exception as e:
         logging.error(f"Unexpected error: {e}")
     finally:
-        transmitter.stop_advertising() 
+        transmitter.stop_server() 
