@@ -1,7 +1,8 @@
 import json
 import logging
 from typing import Dict, Optional
-from bluepy import btle
+from bluepy.btle import Peripheral, Characteristic, Service, BTLEException
+import struct
 import time
 from gps_reader import GPSReader
 
@@ -15,6 +16,7 @@ class BLEDataTransmitter:
         """Initialize BLE transmitter with device name."""
         self.device_name = device_name
         self.peripheral = None
+        self.service = None
         self.characteristic = None
         self._setup_logging()
         
@@ -29,24 +31,41 @@ class BLEDataTransmitter:
     def start_advertising(self):
         """Start BLE advertising."""
         try:
-            self.peripheral = btle.Peripheral()
-            self.peripheral.setAdvertisementData(
-                localName=self.device_name,
-                serviceUUIDs=[self.SERVICE_UUID]
+            # Create peripheral in server mode
+            self.peripheral = Peripheral()
+            self.peripheral.withDelegate(self)
+            
+            # Add service
+            self.service = self.peripheral.addService(Service(self.SERVICE_UUID))
+            
+            # Add characteristic
+            self.characteristic = self.service.addCharacteristic(
+                self.CHAR_UUID,
+                Characteristic.PROPERTY_NOTIFY | Characteristic.PROPERTY_READ,
+                Characteristic.PERMISSION_READ,
+                self.SERVICE_UUID
             )
-            self.characteristic = self.peripheral.getCharacteristics(uuid=self.CHAR_UUID)[0]
+            
+            # Start advertising
+            self.peripheral.advertise()
             self.logger.info(f"Started BLE advertising as {self.device_name}")
             return True
-        except Exception as e:
+            
+        except BTLEException as e:
             self.logger.error(f"Failed to start BLE advertising: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error in BLE advertising: {e}")
             return False
     
     def stop_advertising(self):
         """Stop BLE advertising and disconnect."""
         try:
             if self.peripheral:
+                self.peripheral.stopAdvertising()
                 self.peripheral.disconnect()
                 self.peripheral = None
+                self.service = None
                 self.characteristic = None
             self.logger.info("Stopped BLE advertising")
             return True
@@ -82,7 +101,7 @@ class BLEDataTransmitter:
     
     def is_connected(self) -> bool:
         """Check if BLE is connected and ready."""
-        return bool(self.peripheral and self.characteristic) 
+        return bool(self.peripheral and self.characteristic)
 
 if __name__ == "__main__":
     # Initialize components
