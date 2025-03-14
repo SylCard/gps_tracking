@@ -3,6 +3,7 @@ import logging
 from typing import Dict, Optional
 from bluepy import btle
 import time
+from gps_reader import GPSReader
 
 class BLEDataTransmitter:
     """Handles transmission of GPS data over Bluetooth Low Energy."""
@@ -82,3 +83,36 @@ class BLEDataTransmitter:
     def is_connected(self) -> bool:
         """Check if BLE is connected and ready."""
         return bool(self.peripheral and self.characteristic) 
+
+if __name__ == "__main__":
+    # Initialize components
+    gps = GPSReader(update_interval=5)  # Update every 5 seconds
+    transmitter = BLEDataTransmitter(device_name="NetGuardian")
+    
+    # Connect to GPS
+    if not gps.connect():
+        logging.error("Failed to connect to GPS. Exiting.")
+        exit(1)
+    
+    # Start BLE advertising
+    if not transmitter.start_advertising():
+        logging.error("Failed to start BLE advertising. Exiting.")
+        exit(1)
+    
+    logging.info("GPS Tracker started. Waiting for GPS fix...")
+    
+    try:
+        while True:
+            # Get GPS position
+            position = gps.get_current_position()
+            if position:
+                # Transmit if we have a valid position
+                transmitter.transmit_data(position)
+            time.sleep(5)  # Wait before next update
+            
+    except KeyboardInterrupt:
+        logging.info("Shutting down...")
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+    finally:
+        transmitter.stop_advertising() 
