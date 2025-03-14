@@ -28,11 +28,34 @@ class BLEDataTransmitter:
     def _run_cmd(self, cmd: str) -> bool:
         """Run a shell command and return success status."""
         try:
-            subprocess.run(cmd, shell=True, check=True)
+            result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+            self.logger.debug(f"Command output: {result.stdout}")
             return True
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Command failed: {cmd}")
             self.logger.error(f"Error: {e}")
+            self.logger.error(f"Error output: {e.stderr}")
+            return False
+    
+    def _setup_gatt_service(self):
+        """Set up GATT service and characteristic."""
+        try:
+            # Create GATT service
+            cmds = [
+                # Register service
+                f"sudo gatttool -i hci0 --primary --uuid={self.SERVICE_UUID}",
+                # Add characteristic
+                f"sudo gatttool -i hci0 --characteristics --uuid={self.CHAR_UUID} --properties=0x10 --value-handle=0x000b"
+            ]
+            
+            for cmd in cmds:
+                if not self._run_cmd(cmd):
+                    return False
+                
+            self.logger.info("GATT service setup complete")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to setup GATT service: {e}")
             return False
     
     def start_advertising(self):
@@ -45,13 +68,19 @@ class BLEDataTransmitter:
                 f"sudo hciconfig hci0 name {self.device_name}",
                 "sudo hciconfig hci0 piscan",
                 "sudo hciconfig hci0 sspmode 1",
-                # Set up advertising with our service UUID
-                f"sudo hcitool -i hci0 cmd 0x08 0x0008 1b 02 01 06 11 07 {self.SERVICE_UUID.replace('-', '')} 00"
+                # Enable advertising
+                "sudo hciconfig hci0 leadv",
+                # Set up advertising data with service UUID
+                f"sudo hcitool -i hci0 cmd 0x08 0x0008 15 02 01 06 11 07 {' '.join([self.SERVICE_UUID[i:i+2] for i in range(0, len(self.SERVICE_UUID.replace('-', '')), 2)])}"
             ]
             
             for cmd in cmds:
                 if not self._run_cmd(cmd):
                     return False
+                
+            # Set up GATT service
+            if not self._setup_gatt_service():
+                return False
                 
             self.logger.info(f"Started BLE advertising as {self.device_name}")
             return True
