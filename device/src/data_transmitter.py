@@ -15,20 +15,24 @@ class GPSDataHandler(BaseHTTPRequestHandler):
         """Get current satellite data."""
         try:
             packet = gpsd.get_current()
+            sky = packet.get_sky()  # Get sky view with satellite data
+            
             sats = []
-            for sat in packet.sats:
-                sats.append({
-                    'PRN': sat.PRN,  # Satellite ID
-                    'elevation': sat.elevation,  # Elevation in degrees
-                    'azimuth': sat.azimuth,  # Azimuth in degrees
-                    'SNR': sat.ss,  # Signal strength
-                    'used': sat.used  # Whether satellite is used in fix
-                })
+            if sky and hasattr(sky, 'satellites'):
+                for sat in sky.satellites:
+                    sats.append({
+                        'PRN': sat.PRN,
+                        'elevation': sat.elevation,
+                        'azimuth': sat.azimuth,
+                        'SNR': sat.ss if hasattr(sat, 'ss') else 0,
+                        'used': sat.used
+                    })
+            
             return {
                 'total_sats': len(sats),
                 'used_sats': sum(1 for sat in sats if sat['used']),
                 'satellites': sats,
-                'fix_status': packet.mode  # 0=no data, 1=no fix, 2=2D fix, 3=3D fix
+                'fix_status': packet.mode if hasattr(packet, 'mode') else 0
             }
         except Exception as e:
             return {
@@ -47,15 +51,19 @@ class GPSDataHandler(BaseHTTPRequestHandler):
         self.end_headers()
         
         # Get both position and satellite data
+        sat_data = self.get_satellite_data()
+        fix_status = sat_data['fix_status']
+        
         response = {
             'position': self.current_position if self.current_position else None,
-            'satellite_data': self.get_satellite_data(),
+            'satellite_data': sat_data,
             'fix_description': {
                 0: 'No data',
                 1: 'No fix',
                 2: '2D fix',
                 3: '3D fix'
-            }
+            }[fix_status],  # Just return the current status
+            'timestamp': gpsd.get_current().get_time() if hasattr(gpsd.get_current(), 'get_time') else None
         }
         self.wfile.write(json.dumps(response, indent=2).encode())
     
