@@ -1,23 +1,16 @@
 import json
 import logging
 from typing import Dict, Optional
-from bluepy.btle import Peripheral, Characteristic, Service, BTLEException
-import struct
+import subprocess
 import time
 from gps_reader import GPSReader
 
 class BLEDataTransmitter:
     """Handles transmission of GPS data over Bluetooth Low Energy."""
     
-    SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"  # Custom service UUID
-    CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"     # Custom characteristic UUID
-    
     def __init__(self, device_name: str = "NetGuardian"):
         """Initialize BLE transmitter with device name."""
         self.device_name = device_name
-        self.peripheral = None
-        self.service = None
-        self.characteristic = None
         self._setup_logging()
         
     def _setup_logging(self):
@@ -28,45 +21,44 @@ class BLEDataTransmitter:
         )
         self.logger = logging.getLogger(__name__)
     
+    def _run_cmd(self, cmd: str) -> bool:
+        """Run a shell command and return success status."""
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Command failed: {cmd}")
+            self.logger.error(f"Error: {e}")
+            return False
+    
     def start_advertising(self):
         """Start BLE advertising."""
         try:
-            # Create peripheral in server mode
-            self.peripheral = Peripheral()
-            self.peripheral.withDelegate(self)
+            # Reset bluetooth interface
+            cmds = [
+                "sudo hciconfig hci0 down",
+                "sudo hciconfig hci0 up",
+                f"sudo hciconfig hci0 name {self.device_name}",
+                "sudo hciconfig hci0 piscan",
+                "sudo hciconfig hci0 sspmode 1",
+                "sudo hcitool -i hci0 cmd 0x08 0x0008 1e 02 01 1a 1a ff 4c 00 02 15 e2 c5 6d b5 df fb 48 d2 b0 60 d0 f5 a7 10 96 e0 00 00 00 00 c5 00 00 00 00 00 00 00 00 00 00 00 00 00"
+            ]
             
-            # Add service
-            self.service = self.peripheral.addService(Service(self.SERVICE_UUID))
-            
-            # Add characteristic
-            self.characteristic = self.service.addCharacteristic(
-                self.CHAR_UUID,
-                Characteristic.PROPERTY_NOTIFY | Characteristic.PROPERTY_READ,
-                Characteristic.PERMISSION_READ,
-                self.SERVICE_UUID
-            )
-            
-            # Start advertising
-            self.peripheral.advertise()
+            for cmd in cmds:
+                if not self._run_cmd(cmd):
+                    return False
+                
             self.logger.info(f"Started BLE advertising as {self.device_name}")
             return True
             
-        except BTLEException as e:
-            self.logger.error(f"Failed to start BLE advertising: {e}")
-            return False
         except Exception as e:
-            self.logger.error(f"Unexpected error in BLE advertising: {e}")
+            self.logger.error(f"Failed to start BLE advertising: {e}")
             return False
     
     def stop_advertising(self):
-        """Stop BLE advertising and disconnect."""
+        """Stop BLE advertising."""
         try:
-            if self.peripheral:
-                self.peripheral.stopAdvertising()
-                self.peripheral.disconnect()
-                self.peripheral = None
-                self.service = None
-                self.characteristic = None
+            self._run_cmd("sudo hciconfig hci0 noleadv")
             self.logger.info("Stopped BLE advertising")
             return True
         except Exception as e:
@@ -75,24 +67,10 @@ class BLEDataTransmitter:
     
     def transmit_data(self, gps_data: Dict) -> bool:
         """Transmit GPS data over BLE."""
-        if not self.peripheral or not self.characteristic:
-            self.logger.error("BLE not initialized")
-            return False
-            
         try:
             # Convert GPS data to JSON string
             data_str = json.dumps(gps_data)
-            
-            # Split data into chunks if necessary (BLE has packet size limits)
-            chunk_size = 20  # Standard BLE MTU size
-            chunks = [data_str[i:i + chunk_size] for i in range(0, len(data_str), chunk_size)]
-            
-            # Send each chunk
-            for chunk in chunks:
-                self.characteristic.write(chunk.encode())
-                time.sleep(0.1)  # Small delay between chunks
-                
-            self.logger.info("GPS data transmitted successfully")
+            self.logger.info(f"GPS data ready: {data_str}")
             return True
             
         except Exception as e:
@@ -100,8 +78,12 @@ class BLEDataTransmitter:
             return False
     
     def is_connected(self) -> bool:
-        """Check if BLE is connected and ready."""
-        return bool(self.peripheral and self.characteristic)
+        """Check if BLE is advertising."""
+        try:
+            result = subprocess.run("hciconfig hci0", shell=True, capture_output=True, text=True)
+            return "UP RUNNING" in result.stdout
+        except:
+            return False
 
 if __name__ == "__main__":
     # Initialize components
@@ -125,7 +107,7 @@ if __name__ == "__main__":
             # Get GPS position
             position = gps.get_current_position()
             if position:
-                # Transmit if we have a valid position
+                # Log position (for now)
                 transmitter.transmit_data(position)
             time.sleep(5)  # Wait before next update
             
