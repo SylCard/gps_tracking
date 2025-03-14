@@ -3,7 +3,7 @@ import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import subprocess
-from gps_reader import GPSReader
+import time
 
 class GPSDataHandler(BaseHTTPRequestHandler):
     """Simple HTTP handler that serves GPS data."""
@@ -16,24 +16,32 @@ class GPSDataHandler(BaseHTTPRequestHandler):
         self.end_headers()
         
         try:
-            # Get TPV (Time-Position-Velocity) data
-            tpv = subprocess.run(['gpspipe', '-w', '-n', '1'], capture_output=True, text=True, timeout=2)
-            # Get satellite data
-            sky = subprocess.run(['gpspipe', '-w', '-n', '2'], capture_output=True, text=True, timeout=2)
+            # Run gpsmon in non-interactive mode
+            result = subprocess.run(['gpsmon', '-n'], capture_output=True, text=True, timeout=1)
+            
+            # Also get raw position data as backup
+            pos = subprocess.run(['gpspipe', '-w', '-n', '1'], capture_output=True, text=True, timeout=1)
             
             response = {
-                'gps_data': tpv.stdout,
-                'satellite_data': sky.stdout,
-                'raw_gpsd': subprocess.run(['ps', 'aux', '|', 'grep', 'gpsd'], capture_output=True, text=True).stdout
+                'display_data': result.stdout or "Waiting for GPS data...",
+                'raw_position': pos.stdout,
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
             }
             
             self.wfile.write(json.dumps(response, indent=2).encode())
             
+        except subprocess.TimeoutExpired:
+            error_response = {
+                'error': 'GPS data collection timed out',
+                'display_data': 'No GPS data available',
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            self.wfile.write(json.dumps(error_response, indent=2).encode())
         except Exception as e:
             error_response = {
                 'error': str(e),
-                'gps_data': None,
-                'satellite_data': None
+                'display_data': None,
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
             }
             self.wfile.write(json.dumps(error_response, indent=2).encode())
     
